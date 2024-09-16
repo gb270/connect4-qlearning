@@ -35,15 +35,22 @@ def update_q_table(q_table, state, action, reward, next_state, alpha, gamma):
     td_error = td_target - q_table[state][action]
     q_table[state][action] += alpha * td_error
 
+def get_available_actions(board):
+    return [c for c in range(7) if valid_move(board, c)]
 
-def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon):
+def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon, log_interval):
     q_table = np.zeros((6*7, 7))  # Q-table with states and actions
+    reward_history = []  # To track rewards for each episode
+    
     for episode in range(epochs):
-        print(f"training epoch episode:{episode + 1}/{epochs}")
+        print(f"Training epoch episode: {episode + 1}/{epochs}")
         board = create_board()
         state = board.flatten()
         done = False
-        while not done:
+        moves_count = 0
+        total_reward = 0  # Track the total reward for the current episode
+
+        while not done and moves_count < 42:
             action = choose_action(q_table, state, epsilon)
             if valid_move(board, action):
                 make_move(board, action, 1)  # Player 1 move
@@ -65,13 +72,20 @@ def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon):
                         next_state = board.flatten()
                 update_q_table(q_table, state, action, reward, next_state, alpha, gamma)
                 state = next_state
-            if epsilon > min_epsilon:
-                epsilon *= epsilon_decay
-    return q_table
+                total_reward += reward  # Accumulate reward
+            moves_count += 1
+        
+        reward_history.append(total_reward)  # Store the total reward for the episode
 
+        # Decay ε after each episode
+        epsilon = max(min_epsilon, epsilon * epsilon_decay)
+        
+        # Log progress
+        if (episode + 1) % log_interval == 0:
+            avg_reward = np.mean(reward_history[-log_interval:])  # Average reward for the last `log_interval` episodes
+            print(f"Episode {episode + 1}: ε = {epsilon:.4f}, Average Reward = {avg_reward:.2f}")
 
-def get_available_actions(board):
-    return [c for c in range(7) if valid_move(board, c)]
+    return q_table, reward_history
 
 def display_board(board):
     """Display the board in a user-friendly way."""
@@ -106,7 +120,7 @@ def play_against_model(q_table):
         else:
             # Model's turn
             state = board.flatten()
-            model_move = np.argmax(q_table[state])
+            model_move = choose_action(q_table, state, 0)  # Use ε=0 for exploitation
             if valid_move(board, model_move):
                 print(f"Model chooses column {model_move}")
                 make_move(board, model_move, -1)  # Model is Player -1
@@ -127,18 +141,17 @@ def play_against_model(q_table):
 
         turn *= -1  # Switch turn between user and model
 
-
 def main():
-    epochs = 10
+    epochs = 10000
     alpha = 0.1
     gamma = 0.9
     epsilon = 1.0
     epsilon_decay = 0.995
     min_epsilon = 0.01
+    log_interval = 100  # Log every 100 episodes
 
-    q_table = train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon)
-    print("training complete")
-    print(q_table)
+    q_table, reward_history = train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon, log_interval)
+    print("Training complete")
     play_against_model(q_table)
 
 if __name__ == "__main__":
