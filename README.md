@@ -27,6 +27,10 @@ Other than numpy, this project doesn't make use of any other external Python lib
     ```bash
     python3 src/main.py
 
+### Note
+Once you have trained a model and generated a `checkpoint.npy` file, you can run:
+`python3 src/play.py` to playy against the trained model without running any additional training.
+
 ## Contributing
 
 Feel free to contribute to the project by submitting issues or pull requests.

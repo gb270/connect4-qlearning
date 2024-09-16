@@ -25,3 +25,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# numpy generated files - comment if you want to commit these
+*.npy
