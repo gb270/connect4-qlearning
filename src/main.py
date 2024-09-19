@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import random
 
 def create_board():
     return np.zeros((6, 7), dtype=int)
@@ -23,20 +24,37 @@ def check_win(board, player):
                 return True
     return False
 
-def choose_action(q_table, state, epsilon):
+def intermediate_reward(board, player):
+    # Reward for having multiple aligned pieces (but not winning yet)
+    reward = 0
+    for r in range(6):
+        for c in range(7):
+            if c + 2 < 7 and np.sum(board[r, c:c+3] == player) == 2:
+                reward += 0.1
+            if r + 2 < 6 and np.sum(board[r:r+3, c] == player) == 2:
+                reward += 0.1
+            if r + 2 < 6 and c + 2 < 7 and np.sum([board[r+i, c+i] == player for i in range(3)]) == 2:
+                reward += 0.1
+    return reward
+
+def choose_action(q_table, state, epsilon, valid_actions):
+    # exploration step
     if np.random.rand() < epsilon:
-        return np.random.choice(range(7))  
+        return np.random.choice(valid_actions)  
+    # exploit step
     else:
         if state in q_table:
-            return np.argmax(q_table[state])  
+            valid_q_values = [q_table[state][a] for a in valid_actions]
+            return valid_actions[np.argmax(valid_q_values)]  
+        # if completely new then random choice
         else:
-            return np.random.choice(range(7))  
+            return np.random.choice(valid_actions)  
 
 def update_q_table(q_table, state, action, reward, next_state, alpha, gamma):
     if state not in q_table:
-        q_table[state] = np.zeros(7)
+        q_table[state] = np.ones(7) * 0.5  
     if next_state not in q_table:
-        q_table[next_state] = np.zeros(7)
+        q_table[next_state] = np.ones(7) * 0.5
 
     best_next_action = np.argmax(q_table[next_state])
     td_target = reward + gamma * q_table[next_state][best_next_action]
@@ -55,7 +73,6 @@ def save_checkpoint(q_table, epoch, epsilon, filename='checkpoint.npy'):
     np.save(filename, checkpoint)
 
 def load_checkpoint(filename='checkpoint.npy'):
-    """Load the Q-table and training state from a file."""
     if os.path.exists(filename):
         try:
             checkpoint = np.load(filename, allow_pickle=True).item()
@@ -63,7 +80,6 @@ def load_checkpoint(filename='checkpoint.npy'):
             return checkpoint['q_table'], checkpoint['epoch'], checkpoint['epsilon']
         except Exception as e:
             print(f"Failed to load checkpoint: {e}")
-            # Return default values if loading fails
             return {}, 0, 1.0  
     else:
         raise FileNotFoundError("Checkpoint file not found.")
@@ -71,6 +87,8 @@ def load_checkpoint(filename='checkpoint.npy'):
 def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon, log_interval, checkpoint_file=None):
     q_table = {}
     reward_history = []
+    # using experiences for batch updates
+    experiences = []  
 
     if checkpoint_file and os.path.exists(checkpoint_file):
         q_table, start_epoch, epsilon = load_checkpoint(checkpoint_file)
@@ -86,28 +104,47 @@ def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon, 
         total_reward = 0
 
         while not done and moves_count < 42:
-            action = choose_action(q_table, state, epsilon)
+            valid_actions = get_available_actions(board)
+
+            if not valid_actions:
+                print("No more valid actions - it's a draw!")
+                done = True
+                reward = 0  
+                break
+
+            action = choose_action(q_table, state, epsilon, valid_actions)
             if valid_move(board, action):
                 make_move(board, action, 1)  
+                reward = 0
+
                 if check_win(board, 1):
                     reward = 1
                     done = True
                 else:
-                    if not get_available_actions(board):
-                        reward = 0
+                    reward += intermediate_reward(board, 1)
+                    valid_actions = get_available_actions(board)
+                    if not valid_actions:
                         done = True
+                        print("It's a draw!")
                     else:
-                        reward = 0
-                        next_state = flatten_board(board)
-                        opponent_action = np.random.choice(get_available_actions(board))
-                        make_move(board, opponent_action, -1) 
+                        opponent_action = np.random.choice(valid_actions)
+                        make_move(board, opponent_action, -1)  
                         if check_win(board, -1):
                             reward = -1
                             done = True
-                        next_state = flatten_board(board)
-                update_q_table(q_table, state, action, reward, next_state, alpha, gamma)
+                        else:
+                            reward += intermediate_reward(board, -1)
+
+                next_state = flatten_board(board)
+                experiences.append((state, action, reward, next_state))
+                if len(experiences) >= 10:  
+                    for exp_state, exp_action, exp_reward, exp_next_state in experiences:
+                        update_q_table(q_table, exp_state, exp_action, exp_reward, exp_next_state, alpha, gamma)
+                    experiences.clear() 
+
                 state = next_state
                 total_reward += reward
+
             moves_count += 1
         
         reward_history.append(total_reward)
@@ -122,18 +159,18 @@ def train_q_learning(epochs, alpha, gamma, epsilon, epsilon_decay, min_epsilon, 
 
     return q_table, reward_history
 
+
 def get_available_actions(board):
     return [c for c in range(7) if valid_move(board, c)]
 
 def display_board(board):
-    # uncomment to flip board
     # print(np.flip(board, 0))
     print(board)
 
 def play_against_model(q_table):
     board = create_board()
     done = False
-    turn = 1  
+    turn = 1 
     
     while not done:
         display_board(board)
@@ -157,14 +194,10 @@ def play_against_model(q_table):
                 done = True
         else:
             state = flatten_board(board)
-            model_move = choose_action(q_table, state, 0)
-            if valid_move(board, model_move):
-                print(f"Model chooses column {model_move}")
-                make_move(board, model_move, -1)
-            else:
-                model_move = np.random.choice(get_available_actions(board))
-                print(f"Model chooses random valid column {model_move}")
-                make_move(board, model_move, -1)
+            valid_actions = get_available_actions(board)
+            model_move = choose_action(q_table, state, 0, valid_actions)
+            print(f"Model chooses column {model_move}")
+            make_move(board, model_move, -1)
             
             if check_win(board, -1):
                 display_board(board)
@@ -178,11 +211,11 @@ def play_against_model(q_table):
         turn *= -1
 
 def main():
-    epochs = 1000
+    epochs = 10000
     alpha = 0.05
     gamma = 0.95
     epsilon = 1.0
-    epsilon_decay = 0.99
+    epsilon_decay = 0.995
     min_epsilon = 0.01
     log_interval = 100
     checkpoint_file = 'checkpoint.npy'
